@@ -24,6 +24,7 @@ import {
   SearchRounded,
 } from "@mui/icons-material";
 import { useReviewStore } from "../stores/reviewStore";
+import { useSyncStore } from "../stores/syncStore";
 import type { DiffFile, DiffFileStatus } from "../types/review";
 
 function statusIcon(status: DiffFileStatus) {
@@ -47,6 +48,7 @@ export default function FileTree() {
   const comments = useReviewStore((state) => state.comments);
   const setSelectedFile = useReviewStore((state) => state.setSelectedFile);
   const toggleReviewed = useReviewStore((state) => state.toggleReviewed);
+  const invalidatedFiles = useSyncStore((state) => state.invalidatedFiles);
   const [query, setQuery] = useState("");
   const filtered = useMemo(
     () => files.filter((file) => `${file.path}${file.description}`.toLowerCase().includes(query.trim().toLowerCase())),
@@ -121,6 +123,11 @@ export default function FileTree() {
                   <Typography sx={{ fontSize: 9.5, color: "error.main", fontFamily: "monospace", fontWeight: 850 }}>-{file.deletions}</Typography>
                   {fileComments.length > 0 && (
                     <Chip size="small" label={`${fileComments.length} 评论${unresolved ? ` / ${unresolved} 未解决` : ""}`} color={unresolved ? "warning" : "success"} sx={{ height: 18, fontSize: 9 }} />
+                  )}
+                  {invalidatedFiles.includes(file.id) && (
+                    <Tooltip title="文件内容已更新：原已查看标记作废，评论位置已重算，请重新评审">
+                      <Chip size="small" color="info" label="内容已更新" sx={{ height: 18, fontSize: 9 }} />
+                    </Tooltip>
                   )}
                   {reviewed && <Chip size="small" color="success" label="已查看" sx={{ height: 18, fontSize: 9 }} />}
                 </Stack>

@@ -25,9 +25,13 @@ import {
   ViewAgendaRounded,
 } from "@mui/icons-material";
 import CommentPanel from "../components/CommentPanel";
+import ConflictCenter from "../components/ConflictCenter";
 import DiffEditorPane, { type DiffEditorHandle } from "../components/DiffEditorPane";
 import FileTree from "../components/FileTree";
+import OutboxPanel from "../components/OutboxPanel";
+import SyncControls from "../components/SyncControls";
 import { commentsForFile, useReviewStore } from "../stores/reviewStore";
+import { useOnlineStatus, useSyncStore } from "../stores/syncStore";
 import type { CommentSide } from "../types/review";
 
 export default function DiffPage() {
@@ -42,11 +46,16 @@ export default function DiffPage() {
   const setHideUnchanged = useReviewStore((state) => state.setHideUnchanged);
   const setDraft = useReviewStore((state) => state.setDraft);
   const toggleReviewed = useReviewStore((state) => state.toggleReviewed);
+  const reanchorComment = useReviewStore((state) => state.reanchorComment);
   const editorRef = useRef<DiffEditorHandle | null>(null);
   const [lastJump, setLastJump] = useState<number | null>(null);
   const selectedFile = files.find((file) => file.id === selectedFileId)!;
   const fileComments = useMemo(() => commentsForFile(comments, selectedFileId), [comments, selectedFileId]);
   const reviewed = reviewedFiles.includes(selectedFileId);
+  const online = useOnlineStatus();
+  const pendingCount = useSyncStore((state) => state.outbox.filter((entry) => entry.status !== "done").length);
+  const invalidatedFiles = useSyncStore((state) => state.invalidatedFiles);
+  const contentInvalidated = invalidatedFiles.includes(selectedFileId);
 
   const reveal = (side: CommentSide, line: number) => {
     editorRef.current?.revealLine(line, side);
@@ -66,6 +75,14 @@ export default function DiffPage() {
   const movePrevious = () => {
     const line = editorRef.current?.previousChange();
     if (line) setLastJump(line);
+  };
+
+  const reanchor = (commentId: string, side: CommentSide, line: number) => {
+    // 跳到附近的修改行后重新定位
+    const target = editorRef.current?.nextChange() ?? line;
+    reanchorComment(commentId, target, side);
+    editorRef.current?.revealLine(target, side);
+    setLastJump(target);
   };
 
   useEffect(() => {
@@ -148,11 +165,50 @@ export default function DiffPage() {
         </Button>
       </Paper>
 
+      {!online && (
+        <Paper
+          variant="outlined"
+          sx={{
+            mb: 1.2,
+            px: 1.3,
+            py: 0.8,
+            display: "flex",
+            alignItems: "center",
+            gap: 1,
+            bgcolor: "warning.50",
+            borderColor: "warning.light",
+          }}
+        >
+          <Typography sx={{ fontSize: 11.5, fontWeight: 800, color: "warning.dark" }}>
+            离线模式：评论、回复和已查看标记先保存在本机（{pendingCount} 条待同步），恢复联网后按发生顺序并入，不会覆盖同事的处理。
+          </Typography>
+        </Paper>
+      )}
+      {contentInvalidated && online && (
+        <Paper
+          variant="outlined"
+          sx={{
+            mb: 1.2,
+            px: 1.3,
+            py: 0.8,
+            display: "flex",
+            alignItems: "center",
+            gap: 1,
+            bgcolor: "info.50",
+            borderColor: "info.light",
+          }}
+        >
+          <Typography sx={{ fontSize: 11.5, fontWeight: 800, color: "info.dark" }}>
+            本文件内容已更新：原已查看标记已作废，评论位置已按锚点重算；请重新评审后再标记已查看。
+          </Typography>
+        </Paper>
+      )}
+
       <Box
         sx={{
           display: "grid",
           gridTemplateColumns: { xs: "1fr", lg: "255px minmax(620px, 1fr) 330px" },
-          gridTemplateRows: { xs: "auto", lg: "calc(100vh - 164px)" },
+          gridTemplateRows: { xs: "auto", lg: "calc(100vh - 200px)" },
           gap: 1.2,
           minHeight: 0,
         }}
@@ -168,6 +224,7 @@ export default function DiffPage() {
                 <Typography noWrap sx={{ fontSize: 12.5, fontWeight: 950, fontFamily: "monospace" }}>{selectedFile.path}</Typography>
                 <Chip size="small" label={selectedFile.language} sx={{ height: 19, fontSize: 9 }} />
                 {selectedFile.status === "renamed" && <Chip size="small" color="warning" label="重命名" sx={{ height: 19, fontSize: 9 }} />}
+                {contentInvalidated && <Chip size="small" color="info" label="内容已更新" sx={{ height: 19, fontSize: 9 }} />}
               </Stack>
               <Typography noWrap sx={{ mt: 0.25, fontSize: 10, color: "text.secondary" }}>{selectedFile.description}</Typography>
             </Box>
@@ -197,6 +254,7 @@ export default function DiffPage() {
             onDraftChange={setDraft}
             onReveal={reveal}
             onCreateCurrent={createCurrentComment}
+            onReanchor={reanchor}
           />
         </Box>
       </Box>
@@ -204,13 +262,14 @@ export default function DiffPage() {
       <Paper variant="outlined" sx={{ mt: 1.2, px: 1.5, py: 1, display: "flex", alignItems: "center", gap: 1.2, flexWrap: "wrap" }}>
         <UnfoldLessRounded fontSize="small" color="action" />
         <Typography sx={{ fontSize: 10.5, color: "text.secondary" }}>
-          大 Diff 仅调度可见行；切换文件会保留本地评论、已查看状态和审查视图设置。
+          离线操作先入本机待同步队列；恢复联网后按发生顺序并入，冲突保留双方并等待裁决。
         </Typography>
         <Box sx={{ flex: 1 }} />
-        <Typography sx={{ fontSize: 10.5, color: "text.secondary" }}>
-          快捷键：F7 下一处 · Shift+F7 上一处 · Alt+C 评论 · Alt+R 已查看
-        </Typography>
+        <SyncControls />
       </Paper>
+
+      <OutboxPanel />
+      <ConflictCenter />
     </Box>
   );
 }

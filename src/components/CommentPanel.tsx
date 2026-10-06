@@ -16,23 +16,28 @@ import {
   CheckCircleRounded,
   DeleteOutlineRounded,
   ForumRounded,
+  GpsFixedRounded,
   ReplayRounded,
   ReplyRounded,
   SubdirectoryArrowRightRounded,
+  WarningAmberRounded,
 } from "@mui/icons-material";
 import type { CommentDraft, CommentSide } from "../types/review";
 import { commentSideLabel, commentsForFile, useReviewStore } from "../stores/reviewStore";
+import { useSyncStore } from "../stores/syncStore";
 
 export default function CommentPanel({
   draft,
   onDraftChange,
   onReveal,
   onCreateCurrent,
+  onReanchor,
 }: {
   draft: CommentDraft | null;
   onDraftChange: (draft: CommentDraft | null) => void;
   onReveal: (side: CommentSide, line: number) => void;
   onCreateCurrent: () => void;
+  onReanchor: (commentId: string, side: CommentSide, line: number) => void;
 }) {
   const selectedFileId = useReviewStore((state) => state.selectedFileId);
   const files = useReviewStore((state) => state.files);
@@ -41,6 +46,7 @@ export default function CommentPanel({
   const addReply = useReviewStore((state) => state.addReply);
   const resolveComment = useReviewStore((state) => state.resolveComment);
   const deleteComment = useReviewStore((state) => state.deleteComment);
+  const setConflictCenterOpen = useSyncStore((state) => state.setConflictCenterOpen);
   const [draftBody, setDraftBody] = useState("");
   const [replyDrafts, setReplyDrafts] = useState<Record<string, string>>({});
   const selectedFile = files.find((file) => file.id === selectedFileId)!;
@@ -108,18 +114,54 @@ export default function CommentPanel({
               variant="outlined"
               sx={{
                 p: 1.1,
-                borderColor: comment.resolved ? "success.light" : "divider",
-                bgcolor: comment.resolved ? "success.50" : "background.paper",
+                borderColor: comment.conflict
+                  ? "error.light"
+                  : comment.resolved
+                    ? "success.light"
+                    : "divider",
+                bgcolor: comment.conflict ? "error.50" : comment.resolved ? "success.50" : "background.paper",
               }}
             >
-              <Stack direction="row" alignItems="center" spacing={0.7}>
+              <Stack direction="row" alignItems="center" spacing={0.7} flexWrap="wrap" useFlexGap>
                 <Chip
                   size="small"
                   label={`${commentSideLabel(comment.side)} ${comment.line}`}
                   onClick={() => onReveal(comment.side, comment.line)}
                   sx={{ cursor: "pointer", fontFamily: "monospace" }}
                 />
+                {comment.pending && <Chip size="small" color="warning" label="待同步" sx={{ height: 18, fontSize: 9 }} />}
+                {comment.conflict && (
+                  <Chip
+                    size="small"
+                    color="error"
+                    icon={<WarningAmberRounded fontSize="small" />}
+                    label="冲突待裁决"
+                    onClick={() => setConflictCenterOpen(true)}
+                    sx={{ height: 18, fontSize: 9, cursor: "pointer" }}
+                  />
+                )}
+                {comment.orphaned && (
+                  <Chip
+                    size="small"
+                    color="warning"
+                    variant="outlined"
+                    label="位置已失效"
+                    sx={{ height: 18, fontSize: 9 }}
+                  />
+                )}
+                {comment.reanchoredFrom !== undefined && !comment.orphaned && (
+                  <Tooltip title={`内容更新后位置重算：原 ${comment.reanchoredFrom} → ${comment.line}`}>
+                    <Chip size="small" color="info" variant="outlined" label={`重算 ${comment.reanchoredFrom}→${comment.line}`} sx={{ height: 18, fontSize: 9 }} />
+                  </Tooltip>
+                )}
                 <Typography sx={{ fontSize: 10.5, fontWeight: 850, flex: 1 }}>{comment.author}</Typography>
+                {comment.orphaned && (
+                  <Tooltip title="重新定位到附近修改行">
+                    <IconButton size="small" color="primary" onClick={() => onReanchor(comment.id, comment.side, comment.line)}>
+                      <GpsFixedRounded fontSize="small" />
+                    </IconButton>
+                  </Tooltip>
+                )}
                 <Tooltip title={comment.resolved ? "重新打开" : "标记已解决"}>
                   <IconButton size="small" color={comment.resolved ? "primary" : "success"} onClick={() => resolveComment(comment.id, !comment.resolved)}>
                     {comment.resolved ? <ReplayRounded fontSize="small" /> : <CheckCircleRounded fontSize="small" />}
@@ -141,8 +183,9 @@ export default function CommentPanel({
                   <Stack direction="row" alignItems="center" spacing={0.5}>
                     <SubdirectoryArrowRightRounded sx={{ fontSize: 14, color: "text.secondary" }} />
                     <Typography sx={{ fontSize: 10.5, fontWeight: 850 }}>{reply.author}</Typography>
+                    {reply.pending && <Chip size="small" color="warning" label="待同步" sx={{ height: 16, fontSize: 8.5 }} />}
                     <Typography sx={{ fontSize: 9, color: "text.secondary", ml: "auto" }}>
-                      {new Date(reply.createdAt).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}
+                      {new Date(reply.createdAt).toLocaleTimeString("zh-CN", { hour12: false, minute: "2-digit" })}
                     </Typography>
                   </Stack>
                   <Typography sx={{ mt: 0.45, fontSize: 10.8, color: "text.secondary", lineHeight: 1.55 }}>{reply.body}</Typography>
