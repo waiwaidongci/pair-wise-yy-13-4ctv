@@ -72,26 +72,17 @@ const DiffEditorPane = forwardRef<DiffEditorHandle, DiffEditorPaneProps>(functio
     for (const collection of decorationCollectionsRef.current) collection.clear();
     decorationCollectionsRef.current = [];
 
-    const originalDecorations = comments
-      .filter((comment) => comment.side === "original")
-      .map((comment) => ({
-        range: new monaco.Range(comment.line, 1, comment.line, 1),
-        options: {
-          isWholeLine: true,
-          className: "review-comment-line",
-          glyphMarginClassName: "review-comment-glyph",
-        },
-      }));
-    const modifiedDecorations = comments
-      .filter((comment) => comment.side === "modified")
-      .map((comment) => ({
-        range: new monaco.Range(comment.line, 1, comment.line, 1),
-        options: {
-          isWholeLine: true,
-          className: "review-comment-line",
-          glyphMarginClassName: "review-comment-glyph",
-        },
-      }));
+    const toDecoration = (comment: ReviewComment) => ({
+      range: new monaco.Range(comment.line, 1, comment.line, 1),
+      options: {
+        isWholeLine: true,
+        className: comment.outdated ? "review-comment-line review-comment-line-outdated" : "review-comment-line",
+        glyphMarginClassName: comment.outdated ? "review-comment-glyph review-comment-glyph-outdated" : "review-comment-glyph",
+        hoverMessage: comment.outdated ? { value: "⚠️ 文件内容已更新，该评论位置失效" } : undefined,
+      },
+    });
+    const originalDecorations = comments.filter((comment) => comment.side === "original").map(toDecoration);
+    const modifiedDecorations = comments.filter((comment) => comment.side === "modified").map(toDecoration);
 
     decorationCollectionsRef.current.push(editor.getOriginalEditor().createDecorationsCollection(originalDecorations));
     decorationCollectionsRef.current.push(editor.getModifiedEditor().createDecorationsCollection(modifiedDecorations));

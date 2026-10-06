@@ -11,17 +11,22 @@ import {
   Tooltip,
   Typography,
 } from "@mui/material";
+import { alpha } from "@mui/material/styles";
 import {
   AddCommentRounded,
   CheckCircleRounded,
+  CloudOffRounded,
   DeleteOutlineRounded,
   ForumRounded,
   ReplayRounded,
   ReplyRounded,
   SubdirectoryArrowRightRounded,
+  WarningAmberRounded,
+  WrongLocationRounded,
 } from "@mui/icons-material";
 import type { CommentDraft, CommentSide } from "../types/review";
 import { commentSideLabel, commentsForFile, useReviewStore } from "../stores/reviewStore";
+import { useSyncStore } from "../stores/syncStore";
 
 export default function CommentPanel({
   draft,
@@ -41,11 +46,14 @@ export default function CommentPanel({
   const addReply = useReviewStore((state) => state.addReply);
   const resolveComment = useReviewStore((state) => state.resolveComment);
   const deleteComment = useReviewStore((state) => state.deleteComment);
+  const conflicts = useSyncStore((state) => state.conflicts);
+  const adjudicate = useSyncStore((state) => state.adjudicate);
   const [draftBody, setDraftBody] = useState("");
   const [replyDrafts, setReplyDrafts] = useState<Record<string, string>>({});
   const selectedFile = files.find((file) => file.id === selectedFileId)!;
   const currentComments = commentsForFile(comments, selectedFileId);
   const unresolved = currentComments.filter((comment) => !comment.resolved).length;
+  const fileConflicts = conflicts.filter((conflict) => conflict.fileId === selectedFileId);
 
   const submitDraft = () => {
     if (!draft || !draftBody.trim()) return;
@@ -94,6 +102,53 @@ export default function CommentPanel({
       )}
 
       <Box className="scroll-area" sx={{ flex: 1, minHeight: 0, overflowY: "auto", p: 1 }}>
+        {fileConflicts.map((conflict) => {
+          const local = comments.find((comment) => comment.id === conflict.localCommentId);
+          const server = comments.find((comment) => comment.id === conflict.serverCommentId);
+          if (!local || !server) return null;
+          return (
+            <Paper
+              key={conflict.id}
+              variant="outlined"
+              sx={(theme) => ({
+                p: 1.1,
+                mb: 1,
+                borderColor: "error.main",
+                bgcolor: alpha(theme.palette.error.main, 0.05),
+              })}
+            >
+              <Stack direction="row" alignItems="center" spacing={0.6}>
+                <WarningAmberRounded color="error" fontSize="small" />
+                <Typography sx={{ fontSize: 11.5, fontWeight: 900, flex: 1 }}>
+                  同一行冲突 · {commentSideLabel(conflict.side)} {conflict.line}
+                </Typography>
+                <Chip size="small" color="error" variant="outlined" label="待裁决" sx={{ height: 19, fontSize: 9 }} />
+              </Stack>
+              <Typography sx={{ mt: 0.7, fontSize: 10, color: "text.secondary", lineHeight: 1.6 }}>{conflict.summary}</Typography>
+              <Stack direction="row" spacing={0.8} sx={{ mt: 0.8 }}>
+                <Box sx={{ flex: 1, p: 0.8, borderRadius: 1, border: "1px solid", borderColor: "primary.light", bgcolor: "background.paper" }}>
+                  <Typography sx={{ fontSize: 9.5, fontWeight: 900, color: "primary.main" }}>本地 · {local.author}</Typography>
+                  <Typography sx={{ mt: 0.3, fontSize: 10, lineHeight: 1.55 }}>{local.body}</Typography>
+                </Box>
+                <Box sx={{ flex: 1, p: 0.8, borderRadius: 1, border: "1px solid", borderColor: "warning.light", bgcolor: "background.paper" }}>
+                  <Typography sx={{ fontSize: 9.5, fontWeight: 900, color: "warning.dark" }}>服务端 · {server.author}</Typography>
+                  <Typography sx={{ mt: 0.3, fontSize: 10, lineHeight: 1.55 }}>{server.body}</Typography>
+                </Box>
+              </Stack>
+              <Stack direction="row" spacing={0.6} sx={{ mt: 0.9 }}>
+                <Button size="small" variant="contained" color="primary" onClick={() => adjudicate(conflict.id, "local")}>
+                  采用本地
+                </Button>
+                <Button size="small" variant="outlined" color="warning" onClick={() => adjudicate(conflict.id, "server")}>
+                  采用服务端
+                </Button>
+                <Button size="small" variant="text" onClick={() => adjudicate(conflict.id, "both")}>
+                  两者都保留
+                </Button>
+              </Stack>
+            </Paper>
+          );
+        })}
         {currentComments.length === 0 && (
           <Box sx={{ py: 7, textAlign: "center", color: "text.secondary" }}>
             <ForumRounded sx={{ fontSize: 34, opacity: 0.45 }} />
@@ -120,6 +175,21 @@ export default function CommentPanel({
                   sx={{ cursor: "pointer", fontFamily: "monospace" }}
                 />
                 <Typography sx={{ fontSize: 10.5, fontWeight: 850, flex: 1 }}>{comment.author}</Typography>
+                {comment.pending && (
+                  <Tooltip title="断网期间记录在本机，恢复联网后按顺序并入">
+                    <Chip size="small" icon={<CloudOffRounded />} color="info" variant="outlined" label="待同步" sx={{ height: 19, fontSize: 9 }} />
+                  </Tooltip>
+                )}
+                {comment.outdated && (
+                  <Tooltip title="文件内容已更新，该评论的锚定行找不到，位置失效">
+                    <Chip size="small" icon={<WrongLocationRounded />} color="error" variant="outlined" label="位置失效" sx={{ height: 19, fontSize: 9 }} />
+                  </Tooltip>
+                )}
+                {comment.conflictId && (
+                  <Tooltip title="同一行两侧都有修改，裁决后定稿">
+                    <Chip size="small" icon={<WarningAmberRounded />} color="error" label="冲突" sx={{ height: 19, fontSize: 9 }} />
+                  </Tooltip>
+                )}
                 <Tooltip title={comment.resolved ? "重新打开" : "标记已解决"}>
                   <IconButton size="small" color={comment.resolved ? "primary" : "success"} onClick={() => resolveComment(comment.id, !comment.resolved)}>
                     {comment.resolved ? <ReplayRounded fontSize="small" /> : <CheckCircleRounded fontSize="small" />}
@@ -141,6 +211,9 @@ export default function CommentPanel({
                   <Stack direction="row" alignItems="center" spacing={0.5}>
                     <SubdirectoryArrowRightRounded sx={{ fontSize: 14, color: "text.secondary" }} />
                     <Typography sx={{ fontSize: 10.5, fontWeight: 850 }}>{reply.author}</Typography>
+                    {reply.pending && (
+                      <Chip size="small" icon={<CloudOffRounded />} color="info" variant="outlined" label="待同步" sx={{ height: 16, fontSize: 8.5 }} />
+                    )}
                     <Typography sx={{ fontSize: 9, color: "text.secondary", ml: "auto" }}>
                       {new Date(reply.createdAt).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}
                     </Typography>

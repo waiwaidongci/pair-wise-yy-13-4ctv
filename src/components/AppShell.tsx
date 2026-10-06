@@ -13,7 +13,6 @@ import {
 } from "@mui/material";
 import {
   CommitRounded,
-  DoneAllRounded,
   ForkRightRounded,
   KeyboardRounded,
   RateReviewRounded,
@@ -22,8 +21,11 @@ import {
 import { Outlet } from "react-router-dom";
 import { useReviewSummary } from "../queries/review";
 import { useReviewStore } from "../stores/reviewStore";
+import { useSyncEngine } from "../sync/useSyncEngine";
+import SyncCenter from "./SyncCenter";
 
 export default function AppShell() {
+  useSyncEngine();
   const { data, isLoading } = useReviewSummary();
   const files = useReviewStore((state) => state.files);
   const reviewedFiles = useReviewStore((state) => state.reviewedFiles);
@@ -73,9 +75,7 @@ export default function AppShell() {
               </Avatar>
             ))}
           </Stack>
-          <Tooltip title="当前变更已通过本地自动保存">
-            <Chip icon={<DoneAllRounded />} size="small" color="success" variant="outlined" label="自动保存" />
-          </Tooltip>
+          <SyncCenter />
         </Toolbar>
       </AppBar>
       <Outlet />

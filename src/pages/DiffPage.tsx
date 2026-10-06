@@ -204,7 +204,7 @@ export default function DiffPage() {
       <Paper variant="outlined" sx={{ mt: 1.2, px: 1.5, py: 1, display: "flex", alignItems: "center", gap: 1.2, flexWrap: "wrap" }}>
         <UnfoldLessRounded fontSize="small" color="action" />
         <Typography sx={{ fontSize: 10.5, color: "text.secondary" }}>
-          大 Diff 仅调度可见行；切换文件会保留本地评论、已查看状态和审查视图设置。
+          大 Diff 仅调度可见行；评论、回复与已查看在断网时记入本机待同步队列，恢复联网后按发生顺序并入服务端。
         </Typography>
         <Box sx={{ flex: 1 }} />
         <Typography sx={{ fontSize: 10.5, color: "text.secondary" }}>

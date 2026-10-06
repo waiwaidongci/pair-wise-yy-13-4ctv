@@ -44,3 +44,25 @@ textarea {
   background: #3070e4;
   box-shadow: 0 0 0 3px rgba(48, 112, 228, 0.18);
 }
+
+.review-comment-line-outdated {
+  background: rgba(237, 108, 2, 0.1);
+}
+
+.review-comment-glyph-outdated::before {
+  background: #ed6c02;
+  box-shadow: 0 0 0 3px rgba(237, 108, 2, 0.2);
+}
+
+.sync-spin {
+  animation: sync-spin 1.2s linear infinite;
+}
+
+@keyframes sync-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}

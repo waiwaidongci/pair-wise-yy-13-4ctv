@@ -1,14 +1,25 @@
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
-import { mockChangeLines, mockDiffFiles } from "../data/mockDiff";
-import type { CommentDraft, CommentSide, DiffViewMode, ReviewComment } from "../types/review";
+import { initialComments, initialRevisions, initialViewedMarks, LOCAL_AUTHOR } from "../data/initialReview";
+import { mockDiffFiles } from "../data/mockDiff";
+import { applyOpToComments, applyViewedOp, reanchorComments } from "../sync/merge";
+import type { CommentDraft, CommentSide, DiffFile, DiffViewMode, ReviewComment } from "../types/review";
+import type { CommentConflict, ServerFileContent, ServerSnapshot, SyncOp, ViewedMark } from "../types/sync";
+import { uid } from "../utils/id";
+import { useSyncStore } from "./syncStore";
 
 interface ReviewState {
-  files: typeof mockDiffFiles;
+  files: DiffFile[];
   selectedFileId: string;
   viewMode: DiffViewMode;
   hideUnchanged: boolean;
+  /** 已查看标记（含查看时的文件版本），内容更新后自动失效 */
+  viewedMarks: Record<string, ViewedMark>;
+  fileRevisions: Record<string, number>;
+  /** 派生：标记有效且版本未过期的文件 */
   reviewedFiles: string[];
+  /** 派生：看过但内容已更新、需要重看的文件 */
+  staleFiles: string[];
   comments: ReviewComment[];
   draft: CommentDraft | null;
   setSelectedFile: (fileId: string) => void;
@@ -20,61 +31,31 @@ interface ReviewState {
   addReply: (commentId: string, body: string) => void;
   resolveComment: (commentId: string, resolved?: boolean) => void;
   deleteComment: (commentId: string) => void;
+  /** 合并服务端快照：文件版本/内容、评论、已查看标记，并重放本机未确认操作 */
+  applyServerSnapshot: (snapshot: ServerSnapshot, pendingOps: SyncOp[]) => void;
+  /** 操作被服务端确认后，清除对应评论/回复的待同步标记 */
+  markOpsSynced: (ops: SyncOp[]) => void;
+  /** 回写评论上的冲突标记 */
+  flagConflicts: (conflicts: CommentConflict[]) => void;
 }
 
-const initialComments: ReviewComment[] = [
-  {
-    id: "comment-payment-cache-version",
-    fileId: "payment-service",
-    line: mockChangeLines["payment-service"][0],
-    side: "modified",
-    author: "林澈",
-    body: "缓存版本参与 key 后，旧版本数据不会命中；这里还需要确认发版期间双写时间足够长。",
-    createdAt: new Date(Date.now() - 42 * 60_000).toISOString(),
-    resolved: false,
-    replies: [
-      {
-        id: "reply-cache-1",
-        author: "陈乔木",
-        body: "已确认灰度期间会保留 30 分钟双写，并监控 cache.miss 指标。",
-        createdAt: new Date(Date.now() - 31 * 60_000).toISOString(),
-      },
-    ],
-  },
-  {
-    id: "comment-payment-retry",
-    fileId: "payment-service",
-    line: mockChangeLines["payment-service"][4],
-    side: "modified",
-    author: "赵明",
-    body: "重试只覆盖网络错误和网关超时就可以，业务拒绝不能重试，当前分类是正确的。",
-    createdAt: new Date(Date.now() - 26 * 60_000).toISOString(),
-    resolved: true,
-    replies: [],
-  },
-  {
-    id: "comment-order-table-selection",
-    fileId: "order-table",
-    line: mockChangeLines["order-table"][1],
-    side: "modified",
-    author: "周岚",
-    body: "批量选择在翻页后会不会丢数据？建议状态层使用 Set，并补一个跨页选择测试。",
-    createdAt: new Date(Date.now() - 18 * 60_000).toISOString(),
-    resolved: false,
-    replies: [],
-  },
-  {
-    id: "comment-validator-phone",
-    fileId: "validators",
-    line: mockChangeLines["validators"][0],
-    side: "modified",
-    author: "林澈",
-    body: "手机号校验从宽松改为大陆号段，需要确认海外手机号是否走单独入口。",
-    createdAt: new Date(Date.now() - 9 * 60_000).toISOString(),
-    resolved: false,
-    replies: [],
-  },
-];
+function deriveViewed(marks: Record<string, ViewedMark>, revisions: Record<string, number>) {
+  const reviewedFiles: string[] = [];
+  const staleFiles: string[] = [];
+  for (const [fileId, mark] of Object.entries(marks)) {
+    if (!mark.viewed) continue;
+    if (mark.revision >= (revisions[fileId] ?? 1)) reviewedFiles.push(fileId);
+    else staleFiles.push(fileId);
+  }
+  return { reviewedFiles, staleFiles };
+}
+
+function anchorTextOf(files: DiffFile[], fileId: string, side: CommentSide, line: number): string {
+  const file = files.find((item) => item.id === fileId);
+  if (!file) return "";
+  const content = side === "original" ? file.oldContent : file.newContent;
+  return content.split("\n")[line - 1] ?? "";
+}
 
 export const useReviewStore = create<ReviewState>()(
   persist(
@@ -83,7 +64,9 @@ export const useReviewStore = create<ReviewState>()(
       selectedFileId: mockDiffFiles[0].id,
       viewMode: "side-by-side",
       hideUnchanged: true,
-      reviewedFiles: ["router"],
+      viewedMarks: initialViewedMarks,
+      fileRevisions: initialRevisions,
+      ...deriveViewed(initialViewedMarks, initialRevisions),
       comments: initialComments,
       draft: null,
 
@@ -93,11 +76,15 @@ export const useReviewStore = create<ReviewState>()(
 
       toggleReviewed: (fileId) => {
         const target = fileId ?? get().selectedFileId;
-        set((state) => ({
-          reviewedFiles: state.reviewedFiles.includes(target)
-            ? state.reviewedFiles.filter((id) => id !== target)
-            : [...state.reviewedFiles, target],
-        }));
+        const state = get();
+        const revision = state.fileRevisions[target] ?? 1;
+        const current = state.reviewedFiles.includes(target);
+        const viewedMarks: Record<string, ViewedMark> = {
+          ...state.viewedMarks,
+          [target]: { viewed: !current, revision, updatedAt: new Date().toISOString(), source: "local" },
+        };
+        set({ viewedMarks, ...deriveViewed(viewedMarks, state.fileRevisions) });
+        useSyncStore.getState().enqueue({ kind: "file.viewed", fileId: target, viewed: !current, revision });
       },
 
       setDraft: (draft) => set({ draft }),
@@ -105,59 +92,148 @@ export const useReviewStore = create<ReviewState>()(
       addComment: (draft, body) => {
         const trimmed = body.trim();
         if (!trimmed) return;
+        const state = get();
         const comment: ReviewComment = {
-          id: `comment-${Date.now()}`,
+          id: uid("comment"),
           fileId: draft.fileId,
           line: draft.line,
           side: draft.side,
-          author: "林澈",
+          author: LOCAL_AUTHOR,
           body: trimmed,
           createdAt: new Date().toISOString(),
           resolved: false,
           replies: [],
+          pending: true,
+          anchorText: anchorTextOf(state.files, draft.fileId, draft.side, draft.line),
+          anchorRevision: state.fileRevisions[draft.fileId] ?? 1,
         };
-        set((state) => ({ comments: [...state.comments, comment], draft: null }));
+        // 断网时先记在本机（乐观生效），操作入队等待并入
+        set((current) => ({ comments: [...current.comments, comment], draft: null }));
+        useSyncStore.getState().enqueue({ kind: "comment.add", comment });
       },
 
       addReply: (commentId, body) => {
         const trimmed = body.trim();
         if (!trimmed) return;
+        const reply = {
+          id: uid("reply"),
+          author: LOCAL_AUTHOR,
+          body: trimmed,
+          createdAt: new Date().toISOString(),
+          pending: true as const,
+        };
         set((state) => ({
           comments: state.comments.map((comment) =>
-            comment.id === commentId
-              ? {
-                  ...comment,
-                  replies: [
-                    ...comment.replies,
-                    {
-                      id: `reply-${Date.now()}-${comment.replies.length}`,
-                      author: "林澈",
-                      body: trimmed,
-                      createdAt: new Date().toISOString(),
-                    },
-                  ],
-                }
-              : comment,
+            comment.id === commentId ? { ...comment, replies: [...comment.replies, reply] } : comment,
           ),
         }));
+        useSyncStore.getState().enqueue({ kind: "comment.reply", commentId, reply });
       },
 
-      resolveComment: (commentId, resolved = true) =>
+      resolveComment: (commentId, resolved = true) => {
         set((state) => ({
           comments: state.comments.map((comment) => (comment.id === commentId ? { ...comment, resolved } : comment)),
-        })),
+        }));
+        useSyncStore.getState().enqueue({ kind: "comment.resolve", commentId, resolved });
+      },
 
-      deleteComment: (commentId) =>
-        set((state) => ({ comments: state.comments.filter((comment) => comment.id !== commentId) })),
+      deleteComment: (commentId) => {
+        set((state) => ({ comments: state.comments.filter((comment) => comment.id !== commentId) }));
+        const sync = useSyncStore.getState();
+        // 尚未推送的新建/回复操作直接丢弃，删除操作入队（服务端幂等）
+        sync.dropOpsForComment(commentId);
+        sync.enqueue({ kind: "comment.delete", commentId });
+      },
+
+      applyServerSnapshot: (snapshot, pendingOps) =>
+        set((state) => {
+          // 1. 文件版本与内容
+          const fileRevisions = { ...state.fileRevisions };
+          let files = state.files;
+          const changed: { fileId: string; content: ServerFileContent; revision: number }[] = [];
+          for (const [fileId, revision] of Object.entries(snapshot.revisions)) {
+            if (revision <= (fileRevisions[fileId] ?? 1)) continue;
+            fileRevisions[fileId] = revision;
+            const content = snapshot.fileContents[fileId];
+            if (!content) continue;
+            files = files.map((file) =>
+              file.id === fileId ? { ...file, oldContent: content.oldContent, newContent: content.newContent } : file,
+            );
+            changed.push({ fileId, content, revision });
+          }
+
+          // 2. 评论：服务端快照 + 按发生顺序重放本机未确认操作（幂等）
+          const ordered = [...pendingOps].sort((left, right) => left.seq - right.seq);
+          let comments = snapshot.comments;
+          for (const op of ordered) comments = applyOpToComments(comments, op);
+
+          // 3. 内容更新过的文件：评论位置失效重算
+          for (const { fileId, content, revision } of changed) {
+            comments = reanchorComments(comments, fileId, content, revision);
+          }
+
+          // 4. 待同步标记以队列为准
+          const pendingCommentIds = new Set(
+            ordered.filter((op) => op.kind === "comment.add").map((op) => (op as Extract<SyncOp, { kind: "comment.add" }>).comment.id),
+          );
+          const pendingReplyIds = new Set(
+            ordered.filter((op) => op.kind === "comment.reply").map((op) => (op as Extract<SyncOp, { kind: "comment.reply" }>).reply.id),
+          );
+          comments = comments.map((comment) => ({
+            ...comment,
+            pending: pendingCommentIds.has(comment.id) || undefined,
+            replies: comment.replies.map((reply) => ({ ...reply, pending: pendingReplyIds.has(reply.id) || undefined })),
+          }));
+
+          // 5. 已查看标记：服务端快照 + 本机未确认操作；版本过期的标记派生时失效
+          let viewedMarks = snapshot.viewedMarks;
+          for (const op of ordered) {
+            if (op.kind === "file.viewed") viewedMarks = applyViewedOp(viewedMarks, op);
+          }
+
+          return { files, comments, fileRevisions, viewedMarks, ...deriveViewed(viewedMarks, fileRevisions) };
+        }),
+
+      markOpsSynced: (ops) =>
+        set((state) => {
+          const commentIds = new Set(
+            ops.filter((op) => op.kind === "comment.add").map((op) => (op as Extract<SyncOp, { kind: "comment.add" }>).comment.id),
+          );
+          const replyIds = new Set(
+            ops.filter((op) => op.kind === "comment.reply").map((op) => (op as Extract<SyncOp, { kind: "comment.reply" }>).reply.id),
+          );
+          if (!commentIds.size && !replyIds.size) return state;
+          return {
+            comments: state.comments.map((comment) => ({
+              ...comment,
+              pending: comment.pending && commentIds.has(comment.id) ? undefined : comment.pending,
+              replies: comment.replies.map((reply) =>
+                reply.pending && replyIds.has(reply.id) ? { ...reply, pending: undefined } : reply,
+              ),
+            })),
+          };
+        }),
+
+      flagConflicts: (conflicts) =>
+        set((state) => ({
+          comments: state.comments.map((comment) => {
+            const conflict = conflicts.find(
+              (item) => item.localCommentId === comment.id || item.serverCommentId === comment.id,
+            );
+            const conflictId = conflict?.id;
+            return comment.conflictId === conflictId ? comment : { ...comment, conflictId };
+          }),
+        })),
     }),
     {
-      name: "diff-scope-review-v1",
+      name: "diff-scope-review-v2",
       storage: createJSONStorage(() => localStorage),
       partialize: (state) => ({
         selectedFileId: state.selectedFileId,
         viewMode: state.viewMode,
         hideUnchanged: state.hideUnchanged,
-        reviewedFiles: state.reviewedFiles,
+        viewedMarks: state.viewedMarks,
+        fileRevisions: state.fileRevisions,
         comments: state.comments,
       }),
     },

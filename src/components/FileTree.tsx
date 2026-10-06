@@ -44,6 +44,7 @@ export default function FileTree() {
   const files = useReviewStore((state) => state.files);
   const selectedFileId = useReviewStore((state) => state.selectedFileId);
   const reviewedFiles = useReviewStore((state) => state.reviewedFiles);
+  const staleFiles = useReviewStore((state) => state.staleFiles);
   const comments = useReviewStore((state) => state.comments);
   const setSelectedFile = useReviewStore((state) => state.setSelectedFile);
   const toggleReviewed = useReviewStore((state) => state.toggleReviewed);
@@ -79,6 +80,7 @@ export default function FileTree() {
         {filtered.map((file: DiffFile) => {
           const selected = file.id === selectedFileId;
           const reviewed = reviewedFiles.includes(file.id);
+          const stale = staleFiles.includes(file.id);
           const fileComments = comments.filter((comment) => comment.fileId === file.id);
           const unresolved = fileComments.filter((comment) => !comment.resolved).length;
           return (
@@ -123,6 +125,11 @@ export default function FileTree() {
                     <Chip size="small" label={`${fileComments.length} 评论${unresolved ? ` / ${unresolved} 未解决` : ""}`} color={unresolved ? "warning" : "success"} sx={{ height: 18, fontSize: 9 }} />
                   )}
                   {reviewed && <Chip size="small" color="success" label="已查看" sx={{ height: 18, fontSize: 9 }} />}
+                  {stale && (
+                    <Tooltip title="文件内容已更新，此前的已查看标记已失效，需要重新查看">
+                      <Chip size="small" color="warning" label="内容已更新" sx={{ height: 18, fontSize: 9 }} />
+                    </Tooltip>
+                  )}
                 </Stack>
               </Box>
             </ListItemButton>
