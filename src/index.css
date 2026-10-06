@@ -1,0 +1,46 @@
+:root {
+  font-family: "Avenir Next", "PingFang SC", "Microsoft YaHei", sans-serif;
+  color: #172033;
+  background: #eef1f5;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+}
+
+button,
+input,
+textarea {
+  font: inherit;
+}
+
+.scroll-area {
+  scrollbar-width: thin;
+  scrollbar-color: #8b97a8 transparent;
+}
+
+.review-comment-line {
+  background: rgba(48, 112, 228, 0.08);
+}
+
+.review-comment-glyph::before {
+  content: "";
+  position: absolute;
+  left: 5px;
+  top: 5px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #3070e4;
+  box-shadow: 0 0 0 3px rgba(48, 112, 228, 0.18);
+}

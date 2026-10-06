@@ -1,0 +1,11 @@
+{
+  "projectId": "pair-wise-yy-13",
+  "projectName": "DiffScope 代码审查工作台",
+  "category": "代码审查",
+  "businessDomain": "研发工具",
+  "projectForm": "完整项目",
+  "codeScope": "frontend",
+  "languages": "React, TypeScript, Monaco, MUI, Zustand, TanStack Query, Vite",
+  "summary": "代码审查 Diff 查看器，支持并排与行内模式、单词级差异、折叠、行评论、已读追踪与键盘跳转。",
+  "containerized": false
+}
